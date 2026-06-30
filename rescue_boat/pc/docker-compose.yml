@@ -18,6 +18,8 @@ services:
              pip install --no-cache-dir -r vision/requirements.txt &&
              python vision/detector.py"
 
+    working_dir: /app
+
     volumes:
       - ./vision:/app/vision
       - ./dashboard:/app/dashboard

@@ -105,7 +105,7 @@ def process_frame(frame):
 
     cv2.line(annotated, (0, roi_y), (iw, roi_y), (0, 255, 255), 2)
     cv2.putText(
-        annotated, "DROP ZONE", (10, roi_y - 10),
+        annotated, "ROI ZONE (ON WATER)", (10, roi_y - 10),
         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2,
     )
 

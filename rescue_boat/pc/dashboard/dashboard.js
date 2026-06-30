@@ -89,7 +89,7 @@
       el.className = `person-marker ${p.in_danger ? "danger" : "safe"}`;
       el.style.left = `${p.rel_x * 100}%`;
       el.style.top  = `${p.rel_y * 100}%`;
-      el.title = `Person ${i + 1}: conf=${p.confidence} ${p.in_danger ? "⚠ DANGER" : "safe"}`;
+      el.title = `Person ${i + 1}: conf=${p.confidence} ${p.in_danger ? "⚠ IN ROI" : "safe"}`;
       markersLayer.appendChild(el);
     });
   }
