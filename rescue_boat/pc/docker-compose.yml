@@ -11,9 +11,12 @@
 
 services:
   pc:
-    image: nptttn/coding-th-robotics:2026
+    image: python:3.11-slim
     container_name: rescue_pc
-    command: sh -c "pip install -r vision/requirements.txt && python vision/detector.py"
+    command: >
+      sh -c "apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 &&
+             pip install --no-cache-dir -r vision/requirements.txt &&
+             python vision/detector.py"
 
     volumes:
       - ./vision:/app/vision
