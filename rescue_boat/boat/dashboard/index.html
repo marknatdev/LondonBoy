@@ -39,11 +39,10 @@
     <section class="panel camera-panel" id="camera-panel">
       <div class="panel-header">
         <h2 class="panel-title">Live Camera Feed</h2>
-        <span class="live-badge">LIVE</span>
+        <span class="live-badge" id="live-badge" style="opacity:0.4">OFFLINE</span>
       </div>
       <div class="camera-wrap" id="camera-wrap">
-        <img id="camera-feed" src="/video_feed" alt="Camera Feed"
-             onerror="this.src='data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'640\' height=\'480\'><rect fill=\'%23000\'/><text x=\'50%25\' y=\'50%25\' fill=\'%23666\' text-anchor=\'middle\' dominant-baseline=\'middle\' font-size=\'16\' font-family=\'-apple-system\'>Camera Offline</text></svg>'" />
+        <img id="camera-feed" alt="Camera Feed" />
       </div>
       <!-- Detection alert banner -->
       <div class="alert-banner hidden" id="danger-alert">
@@ -58,13 +57,9 @@
         <button class="btn btn-ghost btn-sm" id="clear-map-btn">Clear</button>
       </div>
       <div class="map-wrap" id="map-wrap">
-        <!-- Grid lines -->
         <div class="map-grid"></div>
-        <!-- Boat marker (center) -->
         <div class="boat-marker" id="boat-marker" title="Boat position">⛵</div>
-        <!-- Person markers injected by JS -->
         <div class="markers-layer" id="markers-layer"></div>
-        <!-- Target marker -->
         <div class="target-marker hidden" id="target-marker">🎯</div>
       </div>
       <div class="map-legend">
@@ -80,7 +75,6 @@
         <h2 class="panel-title">Operator Controls</h2>
       </div>
 
-      <!-- Mode selector -->
       <div class="control-group" id="mode-group">
         <label class="control-label">System Mode</label>
         <div class="mode-buttons">
@@ -99,7 +93,6 @@
         </div>
       </div>
 
-      <!-- Target coordinates display -->
       <div class="control-group" id="target-group">
         <label class="control-label">Relative Waypoint</label>
         <div class="coord-display" id="coord-display">
@@ -114,7 +107,6 @@
         </div>
       </div>
 
-      <!-- Actions -->
       <div class="control-group" id="drop-group">
         <button class="btn btn-blue btn-full" id="drop-btn" disabled>
           Deploy Payload
@@ -153,7 +145,6 @@
         </div>
       </div>
 
-      <!-- Detection log -->
       <div class="log-box" id="log-box">
         <div class="log-header">System Events</div>
         <div class="log-entries" id="log-entries">

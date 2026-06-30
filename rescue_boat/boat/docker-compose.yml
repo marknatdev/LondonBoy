@@ -1,5 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# BOAT docker-compose — Deploy on Linux MPU
+# BOAT docker-compose — All-in-one deployment on Arduino UNO Q (Linux MPU)
+#
+# This single container runs:
+#   • YOLO object detection (ONNX Runtime)
+#   • FastAPI server with SocketIO for real-time events
+#   • Apple-inspired operator dashboard (static files)
+#   • Serial bridge to Arduino MCU
 #
 # Run:  docker compose up -d
 # Logs: docker compose logs -f
@@ -10,29 +16,27 @@ services:
     image: nptttn/coding-th-robotics:2026
     container_name: rescue_boat
     command: python vision/detector.py
-    
+
     volumes:
       - ./vision:/app/vision
+      - ./dashboard:/app/dashboard
       - ./models/yolo26n.onnx:/app/model.onnx:ro
       - /dev:/dev
 
     environment:
-      - CAMERA_INDEX=0
+      - CAMERA_ID=0
       - SERIAL_PORT=/dev/ttyACM0
       - SERIAL_BAUD=9600
       - ROI_PERCENT=60
       - HOST=0.0.0.0
       - PORT=8080
       - MODEL_PATH=/app/model.onnx
+      - DASHBOARD_DIR=/app/dashboard
       - INPUT_W=640
       - INPUT_H=640
       - CONF_THRESH=0.45
-      # Allow requests from the operator PC (CORS)
       - CORS_ORIGINS=*
 
-    ports:
-      - "8080:8080"   # WebSocket Video feed
-      
     network_mode: host
     ipc: host
     privileged: true
