@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rescue Boat Dashboard</title>
+  <meta name="description"
+    content="Real-time autonomous rescue boat monitoring: live camera feed, YOLO person detection, ROI danger-zone alerts, and operator control." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════ HEADER ══════ -->
+  <header class="header" id="main-header">
+    <div class="header-left">
+      <div>
+        <h1 class="header-title">Rescue Boat Control</h1>
+        <p class="header-sub">Autonomous Surface Vehicle System</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-pill" id="conn-status">
+        <span class="pulse-dot"></span>
+        <span id="conn-label">Connecting…</span>
+      </div>
+      <div class="status-pill mode-pill" id="mode-badge">
+        <span id="mode-label">SCOUT</span>
+      </div>
+      <div class="status-pill" id="serial-badge">
+        <span id="serial-label">Serial: —</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════ MAIN GRID ══ -->
+  <main class="grid" id="main-grid">
+
+    <!-- ── Camera Panel ────────────────────────────────────────────────── -->
+    <section class="panel camera-panel" id="camera-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Live Camera Feed</h2>
+        <span class="live-badge" id="live-badge" style="opacity:0.4">OFFLINE</span>
+      </div>
+      <div class="camera-wrap" id="camera-wrap">
+        <img id="camera-feed" alt="Camera Feed" />
+      </div>
+      <!-- Detection alert banner -->
+      <div class="alert-banner hidden" id="danger-alert">
+        Target Person in Drop Zone
+      </div>
+    </section>
+
+    <!-- ── Map Panel ───────────────────────────────────────────────────── -->
+    <section class="panel map-panel" id="map-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Detection Radar</h2>
+        <button class="btn btn-ghost btn-sm" id="clear-map-btn">Clear</button>
+      </div>
+      <div class="map-wrap" id="map-wrap">
+        <div class="map-grid"></div>
+        <div class="boat-marker" id="boat-marker" title="Boat position">⛵</div>
+        <div class="markers-layer" id="markers-layer"></div>
+        <div class="target-marker hidden" id="target-marker">🎯</div>
+      </div>
+      <div class="map-legend">
+        <span class="legend-item"><span class="dot dot-safe"></span>Tracking</span>
+        <span class="legend-item"><span class="dot dot-danger"></span>Danger Zone</span>
+        <span class="legend-item"><span class="dot dot-target"></span>Waypoint</span>
+      </div>
+    </section>
+
+    <!-- ── Control Panel ───────────────────────────────────────────────── -->
+    <section class="panel control-panel" id="control-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Operator Controls</h2>
+      </div>
+
+      <div class="control-group" id="mode-group">
+        <label class="control-label">System Mode</label>
+        <div class="mode-buttons">
+          <button class="mode-btn active" id="btn-scout" data-mode="scout">
+            <span class="mode-btn-icon">🔍</span>
+            <span class="mode-btn-name">Scout</span>
+          </button>
+          <button class="mode-btn" id="btn-rescue" data-mode="rescue">
+            <span class="mode-btn-icon">🚁</span>
+            <span class="mode-btn-name">Rescue</span>
+          </button>
+          <button class="mode-btn" id="btn-supply" data-mode="supply_drop">
+            <span class="mode-btn-icon">📦</span>
+            <span class="mode-btn-name">Supply</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="control-group" id="target-group">
+        <label class="control-label">Relative Waypoint</label>
+        <div class="coord-display" id="coord-display">
+          <div class="coord-item">
+            <span class="coord-label">X-AXIS</span>
+            <span class="coord-val" id="coord-x">—</span>
+          </div>
+          <div class="coord-item">
+            <span class="coord-label">Y-AXIS</span>
+            <span class="coord-val" id="coord-y">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="control-group" id="drop-group">
+        <button class="btn btn-blue btn-full" id="drop-btn" disabled>
+          Deploy Payload
+        </button>
+      </div>
+
+      <div class="control-group">
+        <button class="btn btn-danger btn-full" id="stop-btn">
+          Emergency Stop
+        </button>
+      </div>
+    </section>
+
+    <!-- ── Status Panel ────────────────────────────────────────────────── -->
+    <section class="panel status-panel" id="status-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Telemetry & Logs</h2>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card" id="stat-mode">
+          <span class="stat-label">Mode</span>
+          <span class="stat-val" id="stat-mode-val">SCOUT</span>
+        </div>
+        <div class="stat-card" id="stat-persons">
+          <span class="stat-label">Tracking</span>
+          <span class="stat-val" id="stat-persons-val">0</span>
+        </div>
+        <div class="stat-card danger-card" id="stat-danger">
+          <span class="stat-label">In Zone</span>
+          <span class="stat-val" id="stat-danger-val">0</span>
+        </div>
+        <div class="stat-card" id="stat-serial">
+          <span class="stat-label">Hardware</span>
+          <span class="stat-val" id="stat-serial-val">—</span>
+        </div>
+      </div>
+
+      <div class="log-box" id="log-box">
+        <div class="log-header">System Events</div>
+        <div class="log-entries" id="log-entries">
+          <div class="log-entry log-system">Booting Rescue OS…</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
