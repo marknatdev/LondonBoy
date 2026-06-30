@@ -3,7 +3,7 @@ detector.py — YOLO26n person detection with ROI danger-zone logic.
 
 Responsibilities:
   - Capture frames from USB webcam (OpenCV)
-  - Run YOLO26n inference (falls back to yolo11n if yolo26n unavailable)
+  - Run YOLO26n ONNX inference via onnxruntime
   - Draw bounding boxes + ROI line on frame
   - Flag persons whose bbox center is below the ROI line as "in danger"
   - Provide a generator that yields MJPEG frames for the Flask video feed
@@ -14,7 +14,7 @@ import os
 import time
 import cv2
 import numpy as np
-from ultralytics import YOLO
+import onnxruntime as ort
 from vision.roi_config import (
     ROI_LINE_PERCENT,
     ROI_LINE_COLOR, ROI_LINE_THICKNESS,
@@ -23,17 +23,22 @@ from vision.roi_config import (
     CONFIDENCE_THRESHOLD, PERSON_CLASS_ID,
 )
 
+# Hide GPU device-probe warnings
+ort.set_default_logger_severity(3)
+
+MODEL_PATH = os.environ.get("MODEL_PATH", "/app/model.onnx")
+INPUT_W = int(os.environ.get("INPUT_W", "640"))
+INPUT_H = int(os.environ.get("INPUT_H", "640"))
+
 # ── Model loading ─────────────────────────────────────────────────────────────
-def _load_model() -> YOLO:
-    """Try YOLO26n first, fall back to yolo11n."""
-    for model_name in ("yolo26n.pt", "yolo11n.pt"):
-        try:
-            model = YOLO(model_name)
-            print(f"[detector] Loaded model: {model_name}")
-            return model
-        except Exception as exc:
-            print(f"[detector] Could not load {model_name}: {exc}")
-    raise RuntimeError("No YOLO model could be loaded.")
+def _load_model() -> ort.InferenceSession:
+    """Load ONNX Runtime inference session."""
+    if not os.path.exists(MODEL_PATH):
+        raise RuntimeError(f"Model not found at {MODEL_PATH}")
+    print(f"[detector] Loading ONNX model from {MODEL_PATH}...")
+    sess = ort.InferenceSession(MODEL_PATH, providers=["CPUExecutionProvider"])
+    print("[detector] ONNX model loaded successfully.")
+    return sess
 
 
 class Detector:
@@ -62,6 +67,8 @@ class Detector:
             )
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        # 1 frame buffer to reduce latency
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self._running = True
         print(f"[detector] Camera {self.camera_index} opened (640x480).")
 
@@ -76,6 +83,9 @@ class Detector:
     def run(self):
         """Blocking loop — call in a background thread from app.py."""
         self.start()
+        
+        input_name = self.model.get_inputs()[0].name
+        
         while self._running:
             ret, frame = self.cap.read()
             if not ret:
@@ -85,44 +95,56 @@ class Detector:
 
             h, w = frame.shape[:2]
             roi_y = int(h * ROI_LINE_PERCENT / 100)
+            sx, sy = w / INPUT_W, h / INPUT_H
 
-            # ── YOLO inference ────────────────────────────────────────────
-            results = self.model(frame, conf=CONFIDENCE_THRESHOLD, verbose=False)
+            # ── ONNX YOLO inference ───────────────────────────────────────
+            blob = cv2.dnn.blobFromImage(
+                frame, scalefactor=1 / 255.0, size=(INPUT_W, INPUT_H),
+                swapRB=True, crop=False
+            )
+            # Output: [1, 300, 6] -> [300, 6] = [x1, y1, x2, y2, conf, cls]
+            results = self.model.run(None, {input_name: blob})[0][0]
+            
             detections = []
 
-            for result in results:
-                for box in result.boxes:
-                    cls_id = int(box.cls[0])
-                    if cls_id != PERSON_CLASS_ID:
-                        continue
+            for x1m, y1m, x2m, y2m, conf, cls in results:
+                if conf < CONFIDENCE_THRESHOLD:
+                    continue
+                
+                cls_id = int(cls)
+                if cls_id != PERSON_CLASS_ID:
+                    continue
+                
+                x1 = int(x1m * sx)
+                y1 = int(y1m * sy)
+                x2 = int(x2m * sx)
+                y2 = int(y2m * sy)
+                
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
+                in_danger = cy > roi_y
 
-                    conf = float(box.conf[0])
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cx = (x1 + x2) // 2
-                    cy = (y1 + y2) // 2
-                    in_danger = cy > roi_y
+                detections.append({
+                    "bbox": [x1, y1, x2, y2],
+                    "center": [cx, cy],
+                    "confidence": round(float(conf), 3),
+                    "in_danger": in_danger,
+                    # Relative position on frame for map (0.0–1.0)
+                    "rel_x": round(cx / w, 3),
+                    "rel_y": round(cy / h, 3),
+                })
 
-                    detections.append({
-                        "bbox": [x1, y1, x2, y2],
-                        "center": [cx, cy],
-                        "confidence": round(conf, 3),
-                        "in_danger": in_danger,
-                        # Relative position on frame for map (0.0–1.0)
-                        "rel_x": round(cx / w, 3),
-                        "rel_y": round(cy / h, 3),
-                    })
+                # Draw bounding box
+                color = DANGER_BOX_COLOR if in_danger else SAFE_BOX_COLOR
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, LABEL_THICKNESS)
 
-                    # Draw bounding box
-                    color = DANGER_BOX_COLOR if in_danger else SAFE_BOX_COLOR
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, LABEL_THICKNESS)
-
-                    label = f"{'⚠ DANGER' if in_danger else 'SAFE'} {conf:.2f}"
-                    label_y = max(y1 - 8, 16)
-                    cv2.putText(
-                        frame, label, (x1, label_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
-                        color, LABEL_THICKNESS, cv2.LINE_AA,
-                    )
+                label = f"{'⚠ DANGER' if in_danger else 'SAFE'} {float(conf):.2f}"
+                label_y = max(y1 - 8, 16)
+                cv2.putText(
+                    frame, label, (x1, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE,
+                    color, LABEL_THICKNESS, cv2.LINE_AA,
+                )
 
             # ── Draw ROI line ─────────────────────────────────────────────
             cv2.line(frame, (0, roi_y), (w, roi_y),
