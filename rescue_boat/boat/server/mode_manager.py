@@ -100,7 +100,6 @@ class ModeManager:
             return
 
         target_x = target["rel_x"]
-        SPEED = 160        # PWM 0-255
         BASE_STEER = 90    # Servo neutral (degrees)
 
         print(f"[mode] Navigation started → target_x={target_x:.2f}")
@@ -111,9 +110,9 @@ class ModeManager:
             steer = int(BASE_STEER + error * 80)   # ±40° from neutral
             steer = max(50, min(130, steer))        # clamp to servo range
 
+            # HL-51 relay: no speed field — motor runs at fixed RPM
             self.bridge.send({
                 "cmd": "drive",
-                "speed": SPEED,
                 "steering": steer,
             })
             time.sleep(0.2)

@@ -1,78 +1,102 @@
 /*
  * rescue_boat_firmware.ino
  * ─────────────────────────────────────────────────────────────────────────
- * Arduino UNO Q — STM32 MCU side (Zephyr OS / Arduino environment)
+ * Arduino UNO Q — STM32 MCU side
  *
- * Receives JSON commands from the Linux MPU over UART (Serial).
- * Controls:
- *   D9  — Steering Servo (0°=full left, 90°=straight, 130°=full right)
- *   D5  — DC Motor PWM (speed 0–255)
- *   D4  — DC Motor direction (HIGH=forward, LOW=brake)
- *   D10 — Supply Drop Servo (0°=closed, 90°=open/drop)
+ * Motor driver : HL-51 V1.0 Relay Module (ON/OFF only — fixed RPM)
+ * Power source : Arduino UNO Q board 5V pin (no external battery)
  *
- * Expected command format (newline-terminated JSON):
- *   {"cmd":"drive","speed":150,"steering":90}
- *   {"cmd":"stop"}
- *   {"cmd":"drop_supply"}
+ * Pin layout:
+ *   D4  — HL-51 In1  (LOW = relay ON = motor runs)
+ *   D9  — Steering Servo  (50°=left | 90°=straight | 130°=right)
+ *   D10 — Supply Drop Servo (0°=closed | 90°=open/drop)
  *
- * Telemetry sent back every 500ms:
- *   {"steer":<degrees>,"speed":<pwm>,"mode":<cmd>}
+ * HL-51 V1.0 wiring:
+ *
+ *   [ Control side ]
+ *   Arduino 5V  ──► Relay Vcc
+ *   Arduino GND ──► Relay Gnd
+ *   Arduino D4  ──► Relay In1   (LOW = relay ON, HIGH = relay OFF)
+ *
+ *   [ Load side — use NO so motor is OFF by default ]
+ *   Arduino 5V  ──► Relay COM
+ *   Relay NO    ──► DC Motor (+)   ← circuit closes when relay fires
+ *   DC Motor (-)──► Arduino GND
+ *   (NC terminal — leave unconnected)
+ *
+ * NOTE: Arduino 5V pin supplies ~400 mA max.
+ *       Use a small DC motor that draws < 300 mA to stay safe.
+ *       If the board resets under load, use the VIN pin instead
+ *       (requires a 7–12 V power adapter plugged into the barrel jack).
+ *
+ * Commands received from Linux MPU (newline-terminated JSON):
+ *   {"cmd":"drive","steering":90}   ← motor ON, set steering angle
+ *   {"cmd":"stop"}                  ← motor OFF, servo to center
+ *   {"cmd":"drop_supply"}           ← stop motor, open supply hatch
+ *
+ * Telemetry sent back every 500 ms:
+ *   {"motor":true,"steer":90,"cmd":"drive"}
  * ─────────────────────────────────────────────────────────────────────────
  */
 
 #include <Servo.h>
-#include <ArduinoJson.h>   // Install: ArduinoJson by Benoit Blanchon v7+
+#include <ArduinoJson.h>   // ArduinoJson by Benoit Blanchon v7+
 
 // ── Pin definitions ────────────────────────────────────────────────────────
-const int PIN_STEER_SERVO  = 9;
-const int PIN_SUPPLY_SERVO = 10;
-const int PIN_MOTOR_PWM    = 5;
-const int PIN_MOTOR_DIR    = 4;
+const int PIN_RELAY        = 4;    // HL-51 relay IN pin
+const int PIN_STEER_SERVO  = 9;    // Steering servo signal
+const int PIN_SUPPLY_SERVO = 10;   // Supply drop servo signal
+
+// ── HL-51 relay logic (active-LOW: LOW = relay energised = motor ON) ───────
+const int RELAY_ON  = LOW;
+const int RELAY_OFF = HIGH;
 
 // ── Servo objects ──────────────────────────────────────────────────────────
 Servo steerServo;
 Servo supplyServo;
 
-// ── State ──────────────────────────────────────────────────────────────────
-int  currentSpeed   = 0;
-int  currentSteering = 90;   // neutral
-bool motorRunning   = false;
-String currentCmd   = "stop";
+// ── Steering angle limits ──────────────────────────────────────────────────
+const int STEER_LEFT    = 50;
+const int STEER_CENTER  = 90;
+const int STEER_RIGHT   = 130;
 
 // ── Supply drop config ─────────────────────────────────────────────────────
-const int SUPPLY_CLOSED_ANGLE = 0;
-const int SUPPLY_OPEN_ANGLE   = 90;
-const int SUPPLY_HOLD_MS      = 2000;   // hold open for 2 seconds
+const int SUPPLY_CLOSED = 0;
+const int SUPPLY_OPEN   = 90;
+const int SUPPLY_HOLD_MS = 2000;   // hold open 2 s then close
 
-// ── Serial buffer ──────────────────────────────────────────────────────────
+// ── State ──────────────────────────────────────────────────────────────────
+bool   motorRunning   = false;
+int    currentSteering = STEER_CENTER;
+String currentCmd      = "stop";
+
+// ── Serial receive buffer ──────────────────────────────────────────────────
 String serialBuffer = "";
 
-// ── Telemetry interval ─────────────────────────────────────────────────────
-unsigned long lastTelemetry = 0;
-const unsigned long TELEMETRY_INTERVAL_MS = 500;
+// ── Telemetry timer ────────────────────────────────────────────────────────
+unsigned long lastTelemetry      = 0;
+const unsigned long TELEMETRY_MS = 500;
 
 // ─────────────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(9600);
 
+  // Relay pin — HIGH by default so motor starts OFF
+  pinMode(PIN_RELAY, OUTPUT);
+  digitalWrite(PIN_RELAY, RELAY_OFF);
+
+  // Servos
   steerServo.attach(PIN_STEER_SERVO);
   supplyServo.attach(PIN_SUPPLY_SERVO);
+  steerServo.write(STEER_CENTER);
+  supplyServo.write(SUPPLY_CLOSED);
 
-  pinMode(PIN_MOTOR_PWM, OUTPUT);
-  pinMode(PIN_MOTOR_DIR, OUTPUT);
-
-  // Safe initial state
-  steerServo.write(90);          // straight
-  supplyServo.write(SUPPLY_CLOSED_ANGLE);
-  analogWrite(PIN_MOTOR_PWM, 0);
-  digitalWrite(PIN_MOTOR_DIR, HIGH);
-
-  Serial.println("{\"status\":\"ready\",\"msg\":\"Rescue Boat MCU online\"}");
+  Serial.println("{\"status\":\"ready\",\"msg\":\"Rescue Boat MCU online — HL-51 relay mode\"}");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void loop() {
-  // ── Read incoming serial characters ───────────────────────────────────
+  // ── Read serial line from Linux MPU ───────────────────────────────────
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\n') {
@@ -86,8 +110,8 @@ void loop() {
     }
   }
 
-  // ── Periodic telemetry ─────────────────────────────────────────────────
-  if (millis() - lastTelemetry >= TELEMETRY_INTERVAL_MS) {
+  // ── Send telemetry periodically ────────────────────────────────────────
+  if (millis() - lastTelemetry >= TELEMETRY_MS) {
     sendTelemetry();
     lastTelemetry = millis();
   }
@@ -95,7 +119,7 @@ void loop() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 void processCommand(const String& json) {
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<128> doc;
   DeserializationError err = deserializeJson(doc, json);
   if (err) {
     Serial.print("{\"error\":\"json_parse\",\"detail\":\"");
@@ -108,9 +132,8 @@ void processCommand(const String& json) {
   currentCmd = String(cmd);
 
   if (strcmp(cmd, "drive") == 0) {
-    int speed    = doc["speed"]    | 0;
-    int steering = doc["steering"] | 90;
-    cmdDrive(speed, steering);
+    int steering = doc["steering"] | STEER_CENTER;
+    cmdDrive(steering);
 
   } else if (strcmp(cmd, "stop") == 0) {
     cmdStop();
@@ -125,46 +148,41 @@ void processCommand(const String& json) {
   }
 }
 
-// ── Drive command ──────────────────────────────────────────────────────────
-void cmdDrive(int speed, int steering) {
-  currentSpeed    = constrain(speed, 0, 255);
-  currentSteering = constrain(steering, 50, 130);
-
+// ── Drive — relay ON at fixed RPM, set steering angle ─────────────────────
+void cmdDrive(int steering) {
+  currentSteering = constrain(steering, STEER_LEFT, STEER_RIGHT);
   steerServo.write(currentSteering);
-  digitalWrite(PIN_MOTOR_DIR, HIGH);   // forward
-  analogWrite(PIN_MOTOR_PWM, currentSpeed);
+  digitalWrite(PIN_RELAY, RELAY_ON);   // motor ON (full speed from battery)
   motorRunning = true;
 }
 
-// ── Stop command ───────────────────────────────────────────────────────────
+// ── Stop — relay OFF, servo back to center ─────────────────────────────────
 void cmdStop() {
-  currentSpeed = 0;
-  analogWrite(PIN_MOTOR_PWM, 0);
-  digitalWrite(PIN_MOTOR_DIR, LOW);
-  steerServo.write(90);         // return to straight
-  currentSteering = 90;
+  digitalWrite(PIN_RELAY, RELAY_OFF);  // motor OFF
+  steerServo.write(STEER_CENTER);
+  currentSteering = STEER_CENTER;
   motorRunning = false;
 }
 
-// ── Supply drop command ────────────────────────────────────────────────────
+// ── Supply drop — stop first, open hatch, wait, close hatch ───────────────
 void cmdDropSupply() {
-  cmdStop();                                      // stop motors first
+  cmdStop();
   delay(300);
-  supplyServo.write(SUPPLY_OPEN_ANGLE);           // open hatch
+
+  supplyServo.write(SUPPLY_OPEN);
   Serial.println("{\"event\":\"supply_drop\",\"state\":\"open\"}");
   delay(SUPPLY_HOLD_MS);
-  supplyServo.write(SUPPLY_CLOSED_ANGLE);         // close hatch
+
+  supplyServo.write(SUPPLY_CLOSED);
   Serial.println("{\"event\":\"supply_drop\",\"state\":\"closed\"}");
 }
 
 // ── Telemetry ──────────────────────────────────────────────────────────────
 void sendTelemetry() {
-  Serial.print("{\"steer\":");
-  Serial.print(currentSteering);
-  Serial.print(",\"speed\":");
-  Serial.print(currentSpeed);
-  Serial.print(",\"motor\":");
+  Serial.print("{\"motor\":");
   Serial.print(motorRunning ? "true" : "false");
+  Serial.print(",\"steer\":");
+  Serial.print(currentSteering);
   Serial.print(",\"cmd\":\"");
   Serial.print(currentCmd);
   Serial.println("\"}");
