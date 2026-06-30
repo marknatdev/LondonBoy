@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🚤 Rescue Boat — Command Dashboard</title>
+  <meta name="description"
+    content="Real-time autonomous rescue boat monitoring: live camera feed, YOLO person detection, ROI danger-zone alerts, and three-mode operator control." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════ HEADER ══════ -->
+  <header class="header" id="main-header">
+    <div class="header-left">
+      <span class="logo-icon">⚓</span>
+      <div>
+        <h1 class="header-title">RESCUE BOAT</h1>
+        <p class="header-sub">Autonomous Rescue System — Command Dashboard</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-pill" id="conn-status">
+        <span class="pulse-dot"></span>
+        <span id="conn-label">Connecting…</span>
+      </div>
+      <div class="status-pill mode-pill" id="mode-badge">
+        <span id="mode-label">SCOUT</span>
+      </div>
+      <div class="status-pill" id="serial-badge">
+        <span id="serial-label">Serial: —</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════ MAIN GRID ══ -->
+  <main class="grid" id="main-grid">
+
+    <!-- ── Camera Panel ────────────────────────────────────────────────── -->
+    <section class="panel camera-panel" id="camera-panel">
+      <div class="panel-header">
+        <span class="panel-icon">📷</span>
+        <h2 class="panel-title">Live Detection Feed</h2>
+        <span class="live-badge">LIVE</span>
+      </div>
+      <div class="camera-wrap" id="camera-wrap">
+        <img id="camera-feed" src="/video_feed" alt="Camera Feed"
+             onerror="this.src='data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'640\' height=\'480\'><rect fill=\'%230a0f1e\'/><text x=\'50%25\' y=\'50%25\' fill=\'%2300d4ff\' text-anchor=\'middle\' dominant-baseline=\'middle\' font-size=\'18\' font-family=\'Outfit\'>Camera Offline</text></svg>'" />
+        <div class="roi-label">ROI DANGER ZONE ▼</div>
+      </div>
+      <!-- Detection alert banner -->
+      <div class="alert-banner hidden" id="danger-alert">
+        ⚠ PERSON IN DANGER ZONE DETECTED
+      </div>
+    </section>
+
+    <!-- ── Map Panel ───────────────────────────────────────────────────── -->
+    <section class="panel map-panel" id="map-panel">
+      <div class="panel-header">
+        <span class="panel-icon">🗺</span>
+        <h2 class="panel-title">Detection Map</h2>
+        <button class="btn btn-ghost btn-sm" id="clear-map-btn">Clear</button>
+      </div>
+      <div class="map-wrap" id="map-wrap">
+        <!-- Radar sweep overlay -->
+        <div class="radar-sweep" id="radar-sweep"></div>
+        <!-- Grid lines -->
+        <div class="map-grid"></div>
+        <!-- Boat marker (center) -->
+        <div class="boat-marker" id="boat-marker" title="Boat position">⛵</div>
+        <!-- Person markers injected by JS -->
+        <div class="markers-layer" id="markers-layer"></div>
+        <!-- Target marker -->
+        <div class="target-marker hidden" id="target-marker">🎯</div>
+        <!-- Click-to-set-target hint -->
+        <div class="map-hint" id="map-hint">Click to set target</div>
+      </div>
+      <div class="map-legend">
+        <span class="legend-item"><span class="dot dot-safe"></span>Safe</span>
+        <span class="legend-item"><span class="dot dot-danger"></span>Danger</span>
+        <span class="legend-item"><span class="dot dot-target"></span>Target</span>
+      </div>
+    </section>
+
+    <!-- ── Control Panel ───────────────────────────────────────────────── -->
+    <section class="panel control-panel" id="control-panel">
+      <div class="panel-header">
+        <span class="panel-icon">🎮</span>
+        <h2 class="panel-title">Operator Controls</h2>
+      </div>
+
+      <!-- Mode selector -->
+      <div class="control-group" id="mode-group">
+        <label class="control-label">Operating Mode</label>
+        <div class="mode-buttons">
+          <button class="mode-btn active" id="btn-scout"
+                  data-mode="scout">
+            <span class="mode-btn-icon">🔍</span>
+            <span class="mode-btn-name">Scout</span>
+            <span class="mode-btn-desc">Scan & map</span>
+          </button>
+          <button class="mode-btn" id="btn-rescue"
+                  data-mode="rescue">
+            <span class="mode-btn-icon">🚁</span>
+            <span class="mode-btn-name">Rescue</span>
+            <span class="mode-btn-desc">Navigate to target</span>
+          </button>
+          <button class="mode-btn" id="btn-supply"
+                  data-mode="supply_drop">
+            <span class="mode-btn-icon">📦</span>
+            <span class="mode-btn-name">Supply Drop</span>
+            <span class="mode-btn-desc">Deliver payload</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Target coordinates display -->
+      <div class="control-group" id="target-group">
+        <label class="control-label">Target Location
+          <span class="hint-text">(click map to set)</span>
+        </label>
+        <div class="coord-display" id="coord-display">
+          <div class="coord-item">
+            <span class="coord-label">REL X</span>
+            <span class="coord-val" id="coord-x">—</span>
+          </div>
+          <div class="coord-item">
+            <span class="coord-label">REL Y</span>
+            <span class="coord-val" id="coord-y">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Supply drop action -->
+      <div class="control-group" id="drop-group">
+        <label class="control-label">Supply Drop</label>
+        <button class="btn btn-danger btn-full" id="drop-btn"
+                disabled title="Switch to Supply Drop mode first">
+          📦 TRIGGER SUPPLY DROP
+        </button>
+        <p class="hint-text" id="drop-hint">Enable Supply Drop mode first</p>
+      </div>
+
+      <!-- Emergency stop -->
+      <div class="control-group">
+        <button class="btn btn-stop btn-full" id="stop-btn">
+          🛑 EMERGENCY STOP
+        </button>
+      </div>
+    </section>
+
+    <!-- ── Status Panel ────────────────────────────────────────────────── -->
+    <section class="panel status-panel" id="status-panel">
+      <div class="panel-header">
+        <span class="panel-icon">📊</span>
+        <h2 class="panel-title">System Status</h2>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card" id="stat-mode">
+          <span class="stat-icon">⚙️</span>
+          <span class="stat-label">Mode</span>
+          <span class="stat-val" id="stat-mode-val">SCOUT</span>
+        </div>
+        <div class="stat-card" id="stat-persons">
+          <span class="stat-icon">👥</span>
+          <span class="stat-label">Persons</span>
+          <span class="stat-val" id="stat-persons-val">0</span>
+        </div>
+        <div class="stat-card danger-card" id="stat-danger">
+          <span class="stat-icon">⚠️</span>
+          <span class="stat-label">In Danger</span>
+          <span class="stat-val" id="stat-danger-val">0</span>
+        </div>
+        <div class="stat-card" id="stat-serial">
+          <span class="stat-icon">🔌</span>
+          <span class="stat-label">Serial</span>
+          <span class="stat-val" id="stat-serial-val">—</span>
+        </div>
+      </div>
+
+      <!-- Detection log -->
+      <div class="log-box" id="log-box">
+        <div class="log-header">Event Log</div>
+        <div class="log-entries" id="log-entries">
+          <div class="log-entry log-system">System starting…</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- SocketIO + dashboard JS -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# BOAT docker-compose — Deploy on Arduino UNO Q
+#
+# Run:  docker compose up -d
+# Logs: docker compose logs -f
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  boat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rescue_boat_boat:latest
+    container_name: rescue_boat
+    restart: unless-stopped
+
+    ports:
+      - "5000:5000"   # Boat API — PC connects here
+
+    # ── Hardware device passthrough ─────────────────────────────────────
+    devices:
+      - /dev/video0:/dev/video0       # USB Webcam
+      - /dev/ttyACM0:/dev/ttyACM0    # Serial to STM32 MCU
+
+    group_add:
+      - video    # /dev/video* access
+      - dialout  # /dev/tty*  access
+
+    environment:
+      - CAMERA_INDEX=0
+      - SERIAL_PORT=/dev/ttyACM0
+      - SERIAL_BAUD=9600
+      - ROI_LINE_PERCENT=60
+      - HOST=0.0.0.0
+      - PORT=5000
+      # Allow requests from the operator PC (CORS)
+      - CORS_ORIGINS=*
+
+    volumes:
+      - model_cache:/root/.config/Ultralytics
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  model_cache:
+    driver: local
