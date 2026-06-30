@@ -1,46 +1,30 @@
 # 🚤 Autonomous Rescue Boat — System Overview
 
-This project is split into two independent deployments connected over **WiFi**.
+This project is an autonomous rescue boat system that uses computer vision (YOLO) and an Arduino-based hardware control system.
 
 ---
 
 ## Architecture
 
-```
-┌──────────────────────────────────┐        WiFi        ┌──────────────────────────┐
-│       Arduino UNO Q (Boat)       │ ◄────────────────► │     Operator PC          │
-│                                  │                    │                          │
-│  ┌─────────────────────────────┐ │  MJPEG video       │  ┌──────────────────┐   │
-│  │  Linux MPU (Qualcomm)       │ │ ──────────────────►│  │ Dashboard Server │   │
-│  │  • YOLO26n detection        │ │  REST commands     │  │ (Flask, port 8080│   │
-│  │  • ROI danger-zone logic    │ │ ◄──────────────────│  └────────┬─────────┘   │
-│  │  • Boat API (port 5000)     │ │  WebSocket events  │           │             │
-│  │  • Mode Manager             │ │ ──────────────────►│  ┌────────▼─────────┐   │
-│  │  • Serial Bridge            │ │                    │  │  Browser (UI)    │   │
-│  └─────────────────────────────┘ │                    │  └──────────────────┘   │
-│  ┌─────────────────────────────┐ │                    └──────────────────────────┘
-│  │  STM32 MCU (Zephyr OS)      │ │
-│  │  • Steering Servo (D9)      │ │
-│  │  • Supply Servo (D10)       │ │
-│  │  • DC Motor (D4/D5)         │ │
-│  └─────────────────────────────┘ │
-└──────────────────────────────────┘
-```
+The system consists of three main hardware layers:
 
----
+1. **Linux Vision & Server (Boat)**
+   - Runs `detector.py` using ONNX Runtime for lightweight YOLO person detection.
+   - Hosts a FastAPI server providing real-time WebSockets and an HTTP dashboard.
+   - Calculates steering and drop commands and sends them via USB Serial to the MCU.
 
-## What Runs Where
+2. **Arduino MCU (Boat Hardware Controller)**
+   - Runs `rescue_boat_firmware.ino` (Compatible with Arduino UNO R4 / UNO Q).
+   - **Modulino Ecosystem (I2C Qwiic)**:
+     - *Modulino Distance*: Acts as a safety cutoff (stops motor if obstacle < 20cm).
+     - *Modulino Pixels*: Provides visual status (Green = tracking, Red = obstacle, Blue = dropping).
+     - *Modulino Movement & Buttons*: Used for overrides and orientation tracking.
+   - **Servos**: Steering Servo (D9) and Supply Drop Servo (D10).
+   - **Relay**: HL-51 Active-High Relay (D4) controlling the main DC motor.
 
-| Responsibility | Arduino UNO Q (Boat) | Operator PC |
-|---|---|---|
-| Camera capture | ✅ USB Webcam | ❌ |
-| YOLO26n inference | ✅ Qualcomm MPU | ❌ |
-| ROI danger-zone logic | ✅ | ❌ |
-| Motor / servo control | ✅ STM32 MCU | ❌ |
-| Boat API server | ✅ Port 5000 | ❌ |
-| Dashboard web server | ❌ | ✅ Port 8080 |
-| Web browser (UI) | ❌ | ✅ |
-| SocketIO real-time feed | ✅ broadcasts | ✅ receives |
+3. **Operator PC**
+   - Accesses the boat's dashboard remotely via a web browser.
+   - Features a clean, Apple-inspired premium dark mode UI with live camera feed, tracking stats, and operator controls.
 
 ---
 
@@ -49,112 +33,58 @@ This project is split into two independent deployments connected over **WiFi**.
 ```
 rescue_boat/
 │
-├── boat/                      ← Deploy on Arduino UNO Q
+├── boat/                      ← Deploy on the Linux MPU (Boat)
 │   ├── Dockerfile
-│   ├── docker-compose.yml
+│   ├── docker-compose.yml     ← Runs the vision system (host network, privileged)
+│   ├── models/
+│   │   └── yolo26n.onnx       ← Pre-trained ONNX model
 │   ├── vision/
-│   │   ├── detector.py        ← YOLO26n + ROI logic
-│   │   ├── roi_config.py
+│   │   ├── detector.py        ← YOLO inference, FastAPI server, and PySerial bridge
 │   │   └── requirements.txt
-│   ├── server/
-│   │   ├── boat_app.py        ← Lightweight API-only Flask server
-│   │   ├── mode_manager.py    ← Scout/Rescue/Supply Drop state machine
-│   │   └── serial_bridge.py   ← UART to STM32 MCU
-│   └── arduino_firmware/
-│       └── rescue_boat_firmware.ino
+│   ├── arduino_firmware/
+│   │   └── rescue_boat_firmware.ino  ← Flash to the Arduino MCU
+│   └── wiring.md              ← Hardware connection guide
 │
-└── pc/                        ← Deploy on Operator PC
-    ├── Dockerfile
-    ├── docker-compose.yml
-    ├── requirements.txt
-    ├── server/
-    │   └── pc_app.py          ← Dashboard server + API proxy
+└── pc/                        ← Operator UI
     └── dashboard/
-        ├── index.html
-        ├── style.css
-        └── dashboard.js
+        ├── index.html         ← Apple-inspired layout
+        ├── style.css          ← Glassmorphism & System Colors
+        └── dashboard.js       ← SocketIO connection logic
 ```
 
 ---
 
 ## Quickstart
 
-### Step 1 — Deploy on the Boat (Arduino UNO Q)
+### Step 1 — Flash the Arduino MCU
+
+1. Follow the wiring instructions in `boat/wiring.md`.
+2. Open `boat/arduino_firmware/rescue_boat_firmware.ino` in the Arduino IDE.
+3. Install required libraries: **ArduinoJson** and **Arduino_Modulino**.
+4. Flash the code to the Arduino.
+
+### Step 2 — Deploy the Vision System (Linux MPU)
+
+SSH into the boat's Linux environment and run:
 
 ```bash
-# Copy the boat/ folder to the Arduino UNO Q via SSH or USB
-scp -r boat/ user@<boat-ip>:~/rescue_boat/
-
-# SSH into the boat
-ssh user@<boat-ip>
-
-# Build and run
-cd ~/rescue_boat/boat
+cd rescue_boat/boat
 docker compose up -d
-
-# Verify the API is running
-curl http://localhost:5000/api/ping
-# → {"ok": true, "component": "boat"}
 ```
 
-### Step 2 — Deploy on the Operator PC
+*This spins up the ONNX vision pipeline, connects to `/dev/video0` and `/dev/ttyACM0`, and starts the server on port 8080.*
 
-```bash
-cd pc/
+### Step 3 — Operator PC Dashboard
 
-# Set the boat's IP address (find it with: ssh into boat, run `ip addr`)
-# Edit docker-compose.yml and change BOAT_IP=192.168.1.xxx
+To view the newly redesigned Apple-inspired dashboard, you can open the `pc/dashboard/index.html` file in a browser, or serve it locally, and it will connect to the boat's WebSocket stream.
 
-docker compose up -d
-
-# Open dashboard in browser
-# → http://localhost:8080
-```
-
-### Step 3 — Flash the Arduino MCU
-
-1. Open `boat/arduino_firmware/rescue_boat_firmware.ino` in Arduino IDE
-2. Install library: **ArduinoJson** v7+ (by Benoit Blanchon)
-3. Select board: Arduino UNO Q (STM32 MCU side)
-4. Upload
+Alternatively, if you hit the boat's IP directly at `http://<boat-ip>:8080`, it will serve the built-in minimal dashboard.
 
 ---
 
-## Environment Variables
+## System Logic
 
-### Boat (`boat/docker-compose.yml`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `CAMERA_INDEX` | `0` | OpenCV camera device index |
-| `SERIAL_PORT` | `/dev/ttyACM0` | UART to STM32 MCU |
-| `SERIAL_BAUD` | `9600` | UART baud rate |
-| `ROI_LINE_PERCENT` | `60` | ROI line height (% from top) |
-| `PORT` | `5000` | API server port |
-| `CORS_ORIGINS` | `*` | Allow PC dashboard (set to PC IP for security) |
-
-### PC (`pc/docker-compose.yml`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `BOAT_IP` | `192.168.1.100` | **Set this to your boat's WiFi IP** |
-| `BOAT_PORT` | `5000` | Boat API port |
-| `PORT` | `8080` | PC dashboard port |
-
----
-
-## Communication Protocol
-
-All communication between PC and Boat goes over **HTTP + WebSocket** on port 5000.
-
-| Direction | Protocol | Data |
-|---|---|---|
-| Boat → PC | MJPEG HTTP stream | Camera + YOLO annotations |
-| PC → Boat | HTTP POST | Mode change, target coords, drop command |
-| Boat → PC | WebSocket (SocketIO) | Detection events, status updates |
-
----
-
-## Wiring
-
-See [boat/wiring_diagram.md](boat/wiring_diagram.md) for full hardware connections.
+1. **Scout & Track**: The vision system uses YOLO26n to detect `Person` classes. It finds the highest confidence person and maps their relative X coordinate to a 0-180 degree steering angle.
+2. **Follow**: The Arduino receives the steering angle via JSON over PySerial and adjusts the Steering Servo. The Relay (DC Motor) is engaged.
+3. **Danger Zone & Drop**: If the tracked person enters the lower 60% of the camera frame (the ROI line), the system identifies them as "in danger" and triggers the Supply Drop Servo.
+4. **Safety Override**: Regardless of vision commands, if the Modulino Distance sensor detects an obstacle within 20cm, it cuts power to the Relay (DC Motor) to prevent collisions.
