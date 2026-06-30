@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# BOAT docker-compose — Deploy on Arduino UNO Q
+# BOAT docker-compose — Deploy on Linux MPU
 #
 # Run:  docker compose up -d
 # Logs: docker compose logs -f
@@ -9,30 +9,29 @@ services:
   boat:
     image: nptttn/coding-th-robotics:2026
     container_name: rescue_boat
-    command: python server/boat_app.py
+    command: python vision/detector.py
     
     volumes:
-      - ./server:/app/server
       - ./vision:/app/vision
       - ./models/yolo26n.onnx:/app/model.onnx:ro
       - /dev:/dev
-      - model_cache:/root/.config/Ultralytics
 
     environment:
       - CAMERA_INDEX=0
       - SERIAL_PORT=/dev/ttyACM0
       - SERIAL_BAUD=9600
-      - ROI_LINE_PERCENT=60
+      - ROI_PERCENT=60
       - HOST=0.0.0.0
-      - PORT=5000
+      - PORT=8080
       - MODEL_PATH=/app/model.onnx
       - INPUT_W=640
       - INPUT_H=640
+      - CONF_THRESH=0.45
       # Allow requests from the operator PC (CORS)
       - CORS_ORIGINS=*
 
     ports:
-      - "5000:5000"   # Boat API — PC connects here
+      - "8080:8080"   # WebSocket Video feed
       
     network_mode: host
     ipc: host
@@ -44,14 +43,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-volumes:
-  model_cache:
-    driver: local
