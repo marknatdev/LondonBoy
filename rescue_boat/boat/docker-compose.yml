@@ -15,7 +15,7 @@ services:
   boat:
     image: nptttn/coding-th-robotics:2026
     container_name: rescue_boat
-    command: python vision/detector.py
+    command: sh -c "pip install -r vision/requirements.txt && python vision/detector.py"
 
     volumes:
       - ./vision:/app/vision
